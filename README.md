@@ -14,10 +14,26 @@ Every **seed** is one complete, repeatable interpretation of the song. A seeded 
 - **Lens** — the interpretive layer. A lens decides which audio signal (kick onsets, sub, bass, mids, highs, RMS loudness, spectral flux, spectral centroid) drives size, spin, color and effects. Same song, read five different ways.
 - **Camera** — Orbit, Dolly, Handheld, Static, Sweep
 - **Palette** — eight color systems
+- **Backdrop** — Dark, Vivid or Pale: the same palette rendered against a near-black, mid-tone or near-white ground
+- **Color flow** — Linear, Reverse, Ping-pong or Mono: how the palette is traversed across the scene
 - **Post effects** — bloom, chromatic aberration, grain, vignette, particle bursts on kick hits, background flash
-- **Format and clip start** — 9:16, 1:1, 4:5, 16:9 (or Mix), starting at one of the song's loudest windows
+- **Format** — 9:16, 1:1, 4:5, 16:9 (or Mix)
 
-With one clip-start candidate the recipe space is already 153,600 combinations; longer songs add more start windows. The counter in the app shows the live number for your song.
+With one clip-start candidate the recipe space is already 1,843,200 combinations; longer songs add more start points. The counter in the app shows the live number for your song.
+
+## Length: the song decides
+
+A video defaults to the **full song**: the whole WAV or M4A from 0:00 to the end, or for a MIDI file the full span of its notes. There is no arbitrary length cap. A shorter video is something you ask for on purpose: switch Clip to **Clip**, set the seconds, and the clip starts on a musical boundary. Start points come from a novelty analysis of the song itself (three-band envelope flux; peaks mark drops, chorus entries and section changes), so clips begin on the music instead of on an arbitrary second.
+
+During playback every motion phase is driven by the audio analysis, never by a free-running clock: if the song goes silent, the picture holds still. Lows and highs are felt as movement, which is the point of a synesthesia visualizer.
+
+## Mutations
+
+Like VariTheory, Reactor treats a recipe as a genome and the song as the ground that never changes.
+
+- **Mutate** perturbs 1 to 3 genes of the current seed (plus a possible hue or bloom drift) using a stream seeded from the seed and the mutation count, so a mutation chain is exactly reproducible. The song, the format and the length never mutate.
+- **Cross with seed** breeds the current recipe with another seed's recipe gene by gene; the child keeps the current seed and format and records its lineage.
+- The readout shows the lineage (for example `Seed 123456 · mutation 3` or `Crossover 111 × 222`), and exported filenames carry it, so any video can be traced back to the exact recipe that made it.
 
 ## Export
 

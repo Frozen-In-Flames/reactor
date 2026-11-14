@@ -29,8 +29,10 @@ dl{margin:0;border-top:1px solid var(--ln)}dl div{display:flex;justify-content:s
 <label class="drop">Drop a song here or click to browse<small>WAV, M4A, MIDI</small><input type="file" id="file" accept=".wav,.m4a,.mp4,.aac,.mid,.midi,audio/*" hidden></label>
 <button id="demo">Try the built-in demo beat</button>
 <div class="row"><label>Format<select id="fmt"><option>9:16</option><option>1:1</option><option>4:5</option><option>16:9</option><option>Mix</option></select></label>
-<label>Length<select id="len"><option value="15">15 s</option><option value="30">30 s</option><option value="60">60 s</option></select></label></div>
+<label>Clip<select id="lmode"><option value="full">Full song</option><option value="clip">Clip</option></select></label>
+<label>Seconds<input id="lsec" type="number" min="1" step="1" value="15"></label></div>
 <div class="row"><label>Seed<input id="seed" type="number"></label><button id="shuf">Shuffle seed</button></div>
+<div class="row"><button id="mut">Mutate</button><label>Cross with seed<input id="seedB" type="number"></label><button id="xover">Cross</button></div>
 <dl id="rx"></dl><p id="count"></p>
 <div class="row"><button id="prev">Preview</button><button id="exp" class="pri">Export video</button></div>
 <div class="row"><label>Videos in batch<input id="nb" type="number" value="6" min="1" max="200"></label><button id="bat">Export batch</button></div>
@@ -41,12 +43,13 @@ dl{margin:0;border-top:1px solid var(--ln)}dl div{display:flex;justify-content:s
 const $=s=>document.querySelector(s),V3=(...a)=>new BABYLON.Vector3(...a),canvas=$('#c');
 const FORMATS={'9:16':[720,1280],'1:1':[1080,1080],'4:5':[864,1080],'16:9':[1280,720]};
 const SCENES=['Spectrum Wall','Radial Burst','Helix','Tunnel','Synth Terrain','Crystal'],CAMS=['Orbit','Dolly','Handheld','Static','Sweep'];
+const BGS=['Dark','Vivid','Pale'],FLOWS=['Linear','Reverse','Ping-pong','Mono'];
 // A lens decides which audio signal drives size, spin, color and effects: the same song, read differently.
 const LENSES={Rhythm:{size:'kick',spin:'flux',hue:'cent',fx:'kick'},Harmony:{size:'mid',spin:'cent',hue:'mid',fx:'flux'},Texture:{size:'high',spin:'flux',hue:'high',fx:'high'},'Low End':{size:'sub',spin:'bass',hue:'sub',fx:'sub'},Dynamics:{size:'rms',spin:'rms',hue:'rms',fx:'rms'}};
 const PAL=[['Neon','#ff2e93','#7c3aed','#22d3ee'],['Ember','#ff9500','#ff3b30','#ffd60a'],['Aqua','#00f5a0','#00d9f5','#0b5fff'],['Vapor','#f72585','#b5179e','#4cc9f0'],['Blood mono','#e8e8f0','#8d99ae','#ef233c'],['Acid','#d4ff00','#00ff87','#003cff'],['Pastel','#ffd6a5','#fdffb6','#bde0fe'],['Sunset','#ff5d8f','#ffb347','#9d4edd']];
 const MIME=['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
 const N=64,spec=new Float32Array(N),prev=new Float32Array(N),S={sub:0,bass:0,mid:0,high:0,rms:0,flux:0,kick:0,cent:.3,hit:0},D={size:0,spin:0,hue:0,fx:0},P3=[];
-let AC,an,mon,dest,fd,bands,buf,C=[0],R,SO,root,ps,src,playing=false,busy=false,abort=false,t0=0,plen=1,ph=0,H=0,clock=0,fAvg=0,lastHit=0;
+let AC,an,mon,dest,fd,bands,buf,C=[0],R,SO,root,ps,src,playing=false,busy=false,abort=false,t0=0,plen=1,ph=0,H=0,clock=0,fAvg=0,lastHit=0,MUT=0,LIN='',cph=0,contentEnd=0,noteEnd=0;
 const rng=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296},rnd=()=>Math.random()*1e6|0;
 
 /* ---------- audio in: WAV/M4A decode, MIDI parse + synth ---------- */
@@ -76,10 +79,20 @@ function demoNotes(){const Ns=[];for(let i=0;i<128;i++){const t=i*.25,rt=[45,45,
  if(i%2==0)Ns.push({s:t,e:t+.1,ch:9,nt:36,v:120});if(i%4==2)Ns.push({s:t,e:t+.1,ch:9,nt:38,v:100});
  Ns.push({s:t,e:t+.1,ch:9,nt:42,v:i%2?60:90},{s:t,e:t+.22,ch:0,nt:rt+(i%2?12:0),v:100});
  if(i>=16)Ns.push({s:t,e:t+.2,ch:1,nt:rt+24+[0,3,7,10,12,10,7,3][i%8],v:85})}return Ns}
-function cands(len){if(!buf||buf.duration<=len)return[0];const d=buf.getChannelData(0),sr=buf.sampleRate,n=Math.floor(buf.duration),e=[];
- for(let s=0;s<n;s++){let a=0;for(let i=s*sr;i<(s+1)*sr&&i<d.length;i+=32)a+=d[i]*d[i];e.push(a)}
- const w=[];for(let s=0;s+len<=n;s++){let a=0;for(let k=0;k<len;k++)a+=e[s+k];w.push([s,a])}
- w.sort((a,b)=>b[1]-a[1]);const o=[];for(const[s]of w)if(o.length<8&&o.every(x=>Math.abs(x-s)>=len/2))o.push(s);return o.length?o:[0]}
+/* Clip starts come from the song itself: novelty peaks in a 3-band envelope analysis mark the
+   musical boundaries (drops, chorus entries, section changes), so a clip starts on the music,
+   not on an arbitrary second. The beginning of the song is always a candidate. */
+function songStarts(){if(!buf||contentEnd<8)return[0];const d=buf.getChannelData(0),sr=buf.sampleRate,dec=6,hs=128,nh=Math.floor(d.length/dec/hs);
+ if(nh<8)return[0];const nov=new Float32Array(nh);let lp1=0,lp2=0,pb=[0,0,0];
+ for(let h=0;h<nh;h++){let e1=0,e2=0,e3=0;
+  for(let j=0;j<hs;j++){const x=d[(h*hs+j)*dec]||0;lp1+=.06*(x-lp1);lp2+=.012*(lp1-lp2);const low=lp2,mid=lp1-lp2,high=x-lp1;e1+=low*low;e2+=mid*mid;e3+=high*high}
+  const b=[Math.sqrt(e1/hs),Math.sqrt(e2/hs),Math.sqrt(e3/hs)];let v=0;for(let k=0;k<3;k++)v+=Math.max(0,b[k]-pb[k]);pb=b;nov[h]=v}
+ const sm=new Float32Array(nh);for(let h=0;h<nh;h++){let a=0,c=0;for(let k=-3;k<=3;k++){const j=h+k;if(j>=0&&j<nh){a+=nov[j];c++}}sm[h]=a/c}
+ const tps=dec*hs/sr;let mx=0;for(let h=0;h<nh;h++)if(sm[h]>mx)mx=sm[h];
+ const o=[0];if(mx>0){const th=mx*.3;
+  for(let h=2;h<nh-2;h++){if(sm[h]>=sm[h-1]&&sm[h]>=sm[h+1]&&sm[h]>=th){const t=h*tps;
+   if(t<=contentEnd-1&&o.every(x=>Math.abs(x-t)>=2))o.push(+t.toFixed(2))}}}
+ return o.slice(0,8)}
 
 /* ---------- analysis: bands, RMS, centroid, spectral flux, kick onsets ---------- */
 function analyse(dt){an.getByteFrequencyData(fd);let fl=0,lf=0,cs=0,cw=0,sq=0;
@@ -95,8 +108,9 @@ const engine=new BABYLON.Engine(canvas,true,{preserveDrawingBuffer:true,stencil:
 const cam=new BABYLON.ArcRotateCamera('c',-1.5708,1.5708,15,V3(0,0,0),sc);cam.minZ=.05;cam.lowerRadiusLimit=.05;
 const pp=new BABYLON.DefaultRenderingPipeline('pp',false,sc,[cam]);pp.bloomEnabled=true;pp.bloomKernel=64;pp.bloomThreshold=.08;pp.bloomScale=.6;pp.chromaticAberrationEnabled=true;pp.grainEnabled=true;pp.grain.animated=true;pp.imageProcessingEnabled=true;pp.imageProcessing.vignetteEnabled=true;
 const PT=new BABYLON.DynamicTexture('pt',64,sc,false),cx=PT.getContext(),gr=cx.createRadialGradient(32,32,0,32,32,32);gr.addColorStop(0,'#fff');gr.addColorStop(1,'rgba(255,255,255,0)');cx.fillStyle=gr;cx.fillRect(0,0,64,64);PT.hasAlpha=true;PT.update();
-const mat=()=>{const m=new BABYLON.StandardMaterial('m',sc);m.disableLighting=true;m.emissiveColor=new BABYLON.Color3();return m},tc=new BABYLON.Color3();
-const pal=x=>{x=((x%1)+1)%1*3;const i=x|0;BABYLON.Color3.LerpToRef(P3[i%3],P3[(i+1)%3],x-i,tc);return tc};
+const mat=()=>{const m=new BABYLON.StandardMaterial('m',sc);m.disableLighting=true;m.emissiveColor=new BABYLON.Color3();return m},tc=new BABYLON.Color3(),BGC=new BABYLON.Color3();
+let FLOW=0;
+const pal=x=>{let t=((x%1)+1)%1;if(FLOW==1)t=1-t;else if(FLOW==2)t=t<.5?t*2:2-t*2;if(FLOW==3){const c=P3[1],s=.25+t*1.15;tc.set(c.r*s,c.g*s,c.b*s);return tc}t*=3;const i=t|0;BABYLON.Color3.LerpToRef(P3[i%3],P3[(i+1)%3],t-i,tc);return tc};
 const L={
  wall:(m,i,h)=>{m.position.set((i-N/2)*.3,0,0);m.scaling.set(.2,.15+h*6,.2)},
  ring:(m,i,h)=>{const a=i/N*6.283+ph*.1,l=.2+h*3.5,r=3+D.size+l/2;m.position.set(Math.cos(a)*r,Math.sin(a)*r,0);m.rotation.z=a;m.scaling.set(l,.14,.14)},
@@ -105,9 +119,9 @@ const bars=k=>{const ms=[...Array(N)].map(()=>{const m=BABYLON.MeshBuilder.Creat
  return{R:{wall:15,ring:17,helix:19}[k],b:k=='helix'?1.3:1.5708,sw:1,u(){ms.forEach((m,i)=>{L[k](m,i,spec[i]*(.5+D.size*1.2));m.material.emissiveColor.copyFrom(pal(i/N+H))})}}};
 const SCN={'Spectrum Wall':()=>bars('wall'),'Radial Burst':()=>bars('ring'),'Helix':()=>bars('helix'),
  'Tunnel':()=>{const n=26,rs=[...Array(n)].map((_,i)=>{const m=BABYLON.MeshBuilder.CreateTorus('t',{diameter:7,thickness:.14,tessellation:R.poly+1},sc);m.bakeTransformIntoVertices(BABYLON.Matrix.RotationX(1.5708));m.parent=root;m.material=mat();m.position.z=.5+i*2;return m});
-  return{R:.1,b:1.5708,sw:.12,f:.03,u(t,dt){rs.forEach((m,i)=>{m.position.z-=dt*(4+D.size*28);if(m.position.z<.5)m.position.z+=n*2;const s=1+spec[(i*5)%N]*.8;m.scaling.set(s,s,1);m.rotation.z=ph*.5+m.position.z*.12;m.material.emissiveColor.copyFrom(pal(m.position.z/(n*2)+H))})}}},
+  return{R:.1,b:1.5708,sw:.12,f:.03,u(t,dt){rs.forEach((m,i)=>{m.position.z-=dt*(playing?D.size*30:4+D.size*28);if(m.position.z<.5)m.position.z+=n*2;const s=1+spec[(i*5)%N]*.8;m.scaling.set(s,s,1);m.rotation.z=ph*.5+m.position.z*.12;m.material.emissiveColor.copyFrom(pal(m.position.z/(n*2)+H))})}}},
  'Synth Terrain':()=>{const W=48,g=BABYLON.MeshBuilder.CreateGround('g',{width:34,height:28,subdivisions:W-1,updatable:true},sc),m=g.material=mat(),pos=g.getVerticesData('position'),hs=new Float32Array(W*W);let acc=0;g.parent=root;g.alwaysSelectAsActiveMesh=true;m.wireframe=true;
-  return{R:15,b:1.2,sw:.5,f:.02,tg:V3(0,1,2),u(t,dt){acc+=dt;if(acc>.06){acc=0;hs.copyWithin(0,W);for(let c=0;c<W;c++)hs[(W-1)*W+c]=spec[Math.min(N-1,Math.abs(c-W/2+.5)/(W/2)*40|0)]}
+  return{R:15,b:1.2,sw:.5,f:.02,tg:V3(0,1,2),u(t,dt){acc+=dt*(.4+D.spin*2);if(acc>.06){acc=0;hs.copyWithin(0,W);for(let c=0;c<W;c++)hs[(W-1)*W+c]=spec[Math.min(N-1,Math.abs(c-W/2+.5)/(W/2)*40|0)]}
    for(let i=0;i<W*W;i++)pos[i*3+1]=hs[i]*(2+D.size*5);g.updateVerticesData('position',pos);m.emissiveColor.copyFrom(pal(H))}}},
  'Crystal':()=>{const c=BABYLON.MeshBuilder.CreateIcoSphere('c',{radius:2.4,subdivisions:2+R.poly%3,flat:true,updatable:true},sc),m=c.material=mat(),pos=c.getVerticesData('position'),b=pos.slice();c.parent=root;c.alwaysSelectAsActiveMesh=true;m.wireframe=true;
   return{R:13,b:1.4,sw:1,u(){for(let i=0;i<pos.length;i+=3){const s=1+spec[(((Math.atan2(b[i+2],b[i])/Math.PI+1)*N/2)|0)%N]*(.5+D.size)*.9;pos[i]=b[i]*s;pos[i+1]=b[i+1]*s;pos[i+2]=b[i+2]*s}
@@ -115,51 +129,90 @@ const SCN={'Spectrum Wall':()=>bars('wall'),'Radial Burst':()=>bars('ring'),'Hel
 
 /* ---------- recipe: one seed = one complete, repeatable interpretation of the song ---------- */
 function recipe(seed){const r=rng(seed),pk=a=>a[r()*a.length|0],f=$('#fmt').value;
- return{seed,scene:pk(SCENES),lens:pk(Object.keys(LENSES)),pal:r()*PAL.length|0,hue:r(),cam:pk(CAMS),poly:3+(r()*6|0),chroma:r()<.6,grain:r()<.4,vig:r()<.7,burst:r()<.6,flash:r()<.5,bloom:.4+r()*.9,fmt:f=='Mix'?pk(Object.keys(FORMATS)):f,start:C[r()*C.length|0]}}
+ return{seed,scene:pk(SCENES),lens:pk(Object.keys(LENSES)),pal:r()*PAL.length|0,hue:r(),cam:pk(CAMS),poly:3+(r()*6|0),chroma:r()<.6,grain:r()<.4,vig:r()<.7,burst:r()<.6,flash:r()<.5,bloom:.4+r()*.9,fmt:f=='Mix'?pk(Object.keys(FORMATS)):f,start:C[r()*C.length|0],bg:pk(BGS),flow:pk(FLOWS)}}
 function build(r){R=r;if(root)root.dispose(false,true);if(ps)ps.dispose();ps=null;
  const[w,h]=FORMATS[R.fmt];engine.setSize(w,h);P3.length=0;PAL[R.pal].slice(1).forEach(x=>P3.push(BABYLON.Color3.FromHexString(x)));
  root=new BABYLON.TransformNode('root',sc);SO=SCN[R.scene]();cam.setTarget(SO.tg||V3(0,0,0));
- sc.fogMode=BABYLON.Scene.FOGMODE_EXP2;sc.fogDensity=SO.f||0;const bg=P3[0];sc.fogColor.set(bg.r*.05,bg.g*.05,bg.b*.05);
+ FLOW=FLOWS.indexOf(R.flow);const b0=P3[0];
+ if(R.bg=='Vivid')BGC.set(b0.r*.5,b0.g*.5,b0.b*.5);else if(R.bg=='Pale')BGC.set(b0.r+.8*(1-b0.r),b0.g+.8*(1-b0.g),b0.b+.8*(1-b0.b));else BGC.set(b0.r*.05,b0.g*.05,b0.b*.05);
+ sc.fogMode=BABYLON.Scene.FOGMODE_EXP2;sc.fogDensity=SO.f||0;sc.fogColor.copyFrom(BGC);
  pp.grain.intensity=R.grain?18:0;pp.imageProcessing.vignetteWeight=R.vig?3:0;
  if(R.burst){ps=new BABYLON.ParticleSystem('p',2500,sc);ps.particleTexture=PT;ps.emitter=(SO.tg||V3(0,0,0)).clone();
   Object.assign(ps,{minEmitBox:V3(-.3,-.3,-.3),maxEmitBox:V3(.3,.3,.3),direction1:V3(-1,-1,-1),direction2:V3(1,1,1),minSize:.06,maxSize:.28,minLifeTime:.5,maxLifeTime:1.6,minEmitPower:3,maxEmitPower:10,emitRate:0,blendMode:BABYLON.ParticleSystem.BLENDMODE_ONEONE,color1:P3[1].toColor4(1),color2:P3[2].toColor4(1),colorDead:new BABYLON.Color4(0,0,0,0)});ps.start()}}
-function apply(){build(recipe(+$('#seed').value||0));
- const rows=[['Scene',R.scene],['Lens',R.lens],['Reads the song as',Object.entries(LENSES[R.lens]).map(([k,v])=>k+' from '+v).join(', ')],['Camera',R.cam],['Palette',PAL[R.pal][0]],['Clip starts at',R.start+' s'],['Format',R.fmt]];
+function show(){const rows=[['Scene',R.scene],['Lens',R.lens],['Reads the song as',Object.entries(LENSES[R.lens]).map(([k,v])=>k+' from '+v).join(', ')],['Camera',R.cam],['Palette',PAL[R.pal][0]],['Backdrop',R.bg],['Color flow',R.flow],['Video length',$('#lmode').value=='clip'?('Clip, starts at '+R.start+' s'):'Full song'],['Format',R.fmt],['Lineage',LIN]];
  $('#rx').innerHTML=rows.map(([k,v])=>`<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
- $('#count').textContent=`${(SCENES.length*Object.keys(LENSES).length*PAL.length*CAMS.length*32*4*C.length).toLocaleString()}+ distinct videos from this song`}
+ $('#count').textContent=`${(SCENES.length*Object.keys(LENSES).length*PAL.length*CAMS.length*32*4*3*4*C.length).toLocaleString()}+ distinct videos from this song`}
+function apply(){MUT=0;const sd=+$('#seed').value||0;build(recipe(sd));LIN='Seed '+sd;show()}
+
+/* ---------- mutation: seeded gene perturbation + two-seed crossover ----------
+   The ground never mutates: the song data, the user's format and the clip length stay fixed.
+   Only the interpretation genes move, and every step is seeded, so a lineage replays exactly. */
+const GENES=['scene','lens','pal','cam','poly','chroma','grain','vig','burst','flash','start','bg','flow'];
+function mutate(){if(!R)return;const r=rng((R.seed^Math.imul(MUT+1,0x9E3779B9))|0),pk=a=>a[r()*a.length|0],n={...R},pool=[...GENES],k=1+(r()*3|0);
+ for(let j=0;j<k;j++){const g=pool.splice(r()*pool.length|0,1)[0];
+  if(g=='scene')n.scene=pk(SCENES);else if(g=='lens')n.lens=pk(Object.keys(LENSES));else if(g=='pal')n.pal=r()*PAL.length|0;
+  else if(g=='cam')n.cam=pk(CAMS);else if(g=='poly')n.poly=3+(r()*6|0);else if(g=='start')n.start=C[r()*C.length|0];
+  else if(g=='bg')n.bg=pk(BGS);else if(g=='flow')n.flow=pk(FLOWS);else n[g]=r()<.5}
+ if(r()<.6)n.hue=((n.hue+(r()-.5)*.5)%1+1)%1;
+ if(r()<.6)n.bloom=Math.min(1.3,Math.max(.4,n.bloom+(r()-.5)*.6));
+ const changed=[...GENES,'hue','bloom'].filter(g=>n[g]!==R[g]);
+ MUT++;LIN='Seed '+R.seed+' · mutation '+MUT;build(n);show();
+ $('#st').textContent=changed.length?`Mutation ${MUT}: ${changed.join(', ')} changed. The song, format and length never mutate.`:`Mutation ${MUT}: every gene held its value. The song, format and length never mutate.`}
+function cross(){const sb=+$('#seedB').value;if(!R||!sb||sb===R.seed)return;const A=R,B=recipe(sb),r=rng((A.seed^Math.imul(sb,0x85EBCA6B))|0),n={seed:A.seed,fmt:A.fmt};
+ for(const g of[...GENES,'hue','bloom'])n[g]=r()<.5?A[g]:B[g];
+ MUT=0;LIN='Crossover '+A.seed+' × '+sb;build(n);show();
+ $('#st').textContent=`Crossover: every gene inherited from seed ${A.seed} or seed ${sb}. Mutate can walk from here.`}
 
 /* ---------- per-frame: lens drivers, camera, post FX ---------- */
 function frame(dt){clock+=dt;playing?analyse(dt):idle(dt);const Ln=LENSES[R.lens];for(const k in Ln)D[k]=S[Ln[k]];
- ph+=dt*(.3+D.spin*2.5);H=R.hue+clock*.015+D.hue*.4;SO.u(clock,dt);
+ /* Synesthesia law: during playback every motion is the song moving. Phases advance only on audio
+    drivers (spin, kick, loudness); the clock-driven drift exists only in the idle attract mode. */
+ ph+=dt*(playing?D.spin*3.2:.3+D.spin*2.5);cph+=dt*(playing?D.spin*1.6:.25);H=R.hue+ph*.05+D.hue*.4;SO.u(clock,dt);
+ pp.grain.animated=!playing;
  const asp=canvas.width/canvas.height;let da=0,db=0,dr=-D.fx*SO.R*.05;
- ({Orbit(){da=Math.sin(clock*.25)*1.1*SO.sw;db=Math.sin(clock*.17)*.3*SO.sw},Dolly(){dr+=Math.sin(clock*.35)*SO.R*.25*(SO.sw>.3)},Handheld(){da=(Math.sin(clock*1.3)+Math.sin(clock*2.9))*.02*(1+S.kick*3);db=Math.sin(clock*2.1)*.015*(1+S.kick*3)},Sweep(){da=clock*.15*SO.sw},Static(){}})[R.cam]();
+ ({Orbit(){da=Math.sin(cph)*1.1*SO.sw;db=Math.sin(cph*.7)*.3*SO.sw},Dolly(){dr+=Math.sin(cph*.8)*SO.R*.25*(SO.sw>.3)},Handheld(){const f=.3+S.rms;da=(Math.sin(cph*7)+Math.sin(cph*13))*.02*(1+S.kick*3)*f;db=Math.sin(cph*9)*.015*(1+S.kick*3)*f},Sweep(){da=cph*.6*SO.sw},Static(){}})[R.cam]();
  cam.alpha=-1.5708+da;cam.beta=SO.b+db;cam.radius=(SO.R+dr)*Math.max(1,1.78/asp);
  pp.chromaticAberration.aberrationAmount=R.chroma?8+S.kick*S.kick*160:0;pp.bloomWeight=R.bloom*(.5+D.fx*.9);
- const b=P3[0],f=.05+(R.flash?D.fx*.5:0);sc.clearColor.set(b.r*f,b.g*f,b.b*f,1);
+ const lift=R.flash?D.fx:0;
+ if(R.bg=='Pale')sc.clearColor.set(BGC.r+(1-BGC.r)*lift*.6,BGC.g+(1-BGC.g)*lift*.6,BGC.b+(1-BGC.b)*lift*.6,1);
+ else{const k=1+lift*1.5;sc.clearColor.set(BGC.r*k,BGC.g*k,BGC.b*k,1)}
  if(ps&&S.hit)ps.manualEmitCount=40+D.fx*180|0;
  $('#bar i').style.width=playing?Math.min(100,(AC.currentTime-t0)/plen*100)+'%':'0'}
 let last=performance.now();engine.runRenderLoop(()=>{const n=performance.now(),dt=Math.min(.05,(n-last)/1e3);last=n;frame(dt);sc.render()});
 
 /* ---------- play, record, batch ---------- */
-function save(b,mt){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`reactor_${R.seed}_${R.scene.replace(/ /g,'')}_${R.fmt.replace(':','x')}.${mt.includes('mp4')?'mp4':'webm'}`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4e3)}
+function save(b,mt){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`reactor_${LIN.replace(/[^a-zA-Z0-9]+/g,'_')}_${R.scene.replace(/ /g,'')}_${R.fmt.replace(':','x')}.${mt.includes('mp4')?'mp4':'webm'}`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4e3)}
 function run(rec){return new Promise(res=>{if(!buf)return res();initAudio();AC.resume();if(src){src.onended=null;try{src.stop()}catch{}}
- plen=Math.min(+$('#len').value,buf.duration-R.start);let mr,ch=[];
+ const full=$('#lmode').value!='clip',st=full?0:R.start;
+ const want=full?contentEnd:Math.max(1,+$('#lsec').value||15);
+ plen=Math.max(.5,Math.min(want,contentEnd-st));let mr,ch=[];
  if(rec){const mt=MIME.find(t=>MediaRecorder.isTypeSupported(t))||'';mr=new MediaRecorder(new MediaStream([...canvas.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:8e6});
   mr.ondataavailable=e=>e.data.size&&ch.push(e.data);mr.onstop=()=>{save(new Blob(ch,{type:mt.split(';')[0]}),mt);res()};mr.start()}
- mon.gain.value=rec?0:1;src=AC.createBufferSource();src.buffer=buf;src.connect(an);t0=AC.currentTime;playing=true;
- src.onended=()=>{playing=false;src=null;if(mr)setTimeout(()=>mr.stop(),250);else res()};src.start(0,R.start,plen)})}
+ mon.gain.value=rec?0:1;
+ for(const k in S)S[k]=k=='cent'?.3:0;spec.fill(0);prev.fill(0);fAvg=0;lastHit=0;
+ src=AC.createBufferSource();src.buffer=buf;src.connect(an);t0=AC.currentTime;playing=true;
+ src.onended=()=>{playing=false;src=null;if(mr)setTimeout(()=>mr.stop(),250);else res()};src.start(0,st,plen)})}
 async function batch(){if(busy||!buf)return;busy=true;abort=false;const n=+$('#nb').value,s0=+$('#seed').value;
  for(let i=0;i<n&&!abort;i++){$('#seed').value=s0+i;apply();$('#st').textContent=`Recording video ${i+1} of ${n}, seed ${s0+i}. Keep this tab visible.`;await run(true)}
  $('#st').textContent=abort?'Stopped.':`Done. ${n} videos saved to your downloads.`;busy=false}
 async function load(f){initAudio();$('#st').textContent='Reading '+f.name+'...';
- try{const ab=await f.arrayBuffer();buf=/\.midi?$/i.test(f.name)?await synth(parseMidi(ab)):await AC.decodeAudioData(ab);ready(f.name)}catch(e){$('#st').textContent='Could not read that file ('+e.message+'). Try a WAV, M4A or MIDI file.'}}
-function ready(name){C=cands(+$('#len').value);$('#seed').value=rnd();apply();$('#st').textContent=`${name} is loaded, ${buf.duration.toFixed(0)} s long. Preview it or export a video.`}
+ try{const ab=await f.arrayBuffer();
+  if(/\.midi?$/i.test(f.name)){const ns=parseMidi(ab);noteEnd=ns.reduce((m,n)=>Math.max(m,n.e),0);buf=await synth(ns)}
+  else{noteEnd=0;buf=await AC.decodeAudioData(ab)}
+  ready(f.name)}catch(e){$('#st').textContent='Could not read that file ('+e.message+'). Try a WAV, M4A or MIDI file.'}}
+function ready(name){contentEnd=noteEnd?Math.min(buf.duration,noteEnd+.4):buf.duration;
+ if(+$('#lsec').value>Math.floor(contentEnd))$('#lsec').value=Math.max(1,Math.floor(contentEnd));
+ C=songStarts();$('#seed').value=rnd();apply();
+ const mm=Math.floor(contentEnd/60),ss2=String(Math.round(contentEnd%60)).padStart(2,'0');
+ $('#st').textContent=`${name} is loaded, ${mm}:${ss2} long. Preview it or export a video.`}
 
 $('#file').onchange=e=>e.target.files[0]&&load(e.target.files[0]);
 ['dragover','drop'].forEach(t=>addEventListener(t,e=>{e.preventDefault();if(t=='drop'&&e.dataTransfer.files[0])load(e.dataTransfer.files[0])}));
-$('#demo').onclick=async()=>{initAudio();$('#st').textContent='Building demo beat...';buf=await synth(demoNotes());ready('The demo beat')};
+$('#demo').onclick=async()=>{initAudio();$('#st').textContent='Building demo beat...';const ns=demoNotes();noteEnd=ns.reduce((m,n)=>Math.max(m,n.e),0);buf=await synth(ns);ready('The demo beat')};
 $('#shuf').onclick=()=>{$('#seed').value=rnd();apply()};$('#seed').onchange=apply;$('#fmt').onchange=apply;
-$('#len').onchange=()=>{C=cands(+$('#len').value);apply()};
+$('#mut').onclick=mutate;$('#xover').onclick=cross;
+$('#lmode').onchange=()=>{C=songStarts();apply()};
+$('#lsec').onchange=()=>{C=songStarts();apply()};
 $('#prev').onclick=()=>{if(!busy)run(false)};
 $('#exp').onclick=async()=>{if(busy||!buf)return;busy=true;abort=false;$('#st').textContent='Recording. Keep this tab visible.';await run(true);$('#st').textContent='Saved to your downloads.';busy=false};
 $('#bat').onclick=batch;$('#stop').onclick=()=>{abort=true;if(src)src.stop()};
