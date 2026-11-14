@@ -1,0 +1,167 @@
+<!doctype html>
+<!-- Reactor: one song in, thousands of videos out. Put this file in a repo as index.html and enable GitHub Pages. -->
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reactor: one song, thousands of videos</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/babylonjs@6.49.0/babylon.js"></script>
+<style>
+:root{--bg:#e8e9ee;--ink:#17171f;--mut:#63647a;--ac:#3a3cff;--ln:#c4c6d3}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 'Bricolage Grotesque',system-ui,sans-serif}
+header{padding:22px 28px 14px}h1{margin:0;font-size:34px;font-weight:800;letter-spacing:-.02em}header p{margin:2px 0 0;color:var(--mut);max-width:60ch}
+main{display:grid;grid-template-columns:1fr 350px;gap:24px;padding:0 28px 28px}
+@media(max-width:880px){main{grid-template-columns:1fr;padding:0 16px 20px}header{padding:18px 16px 10px}}
+.stage{display:flex;flex-direction:column;align-items:center;gap:10px;background:#07070d;border-radius:6px;padding:14px}
+canvas{max-width:100%;max-height:76vh;width:auto;height:auto;background:#000}
+#bar{width:100%;height:3px;background:#22222e}#bar i{display:block;height:100%;width:0;background:#8f90ff}
+aside{display:flex;flex-direction:column;gap:12px}
+.drop{border:2px dashed var(--ln);padding:20px;text-align:center;cursor:pointer;font-weight:600}.drop:hover,.drop:focus-within{border-color:var(--ac)}.drop small{display:block;color:var(--mut);font-weight:400}
+button,select,input{font:inherit;color:inherit;background:#f6f6fa;border:1px solid var(--ln);border-radius:4px;padding:8px 10px;min-width:0}
+button{cursor:pointer;font-weight:600}button:hover{border-color:var(--ac)}.pri{background:var(--ac);border-color:var(--ac);color:#fff}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.row{display:flex;gap:8px;align-items:end}.row>*{flex:1}label{display:flex;flex-direction:column;gap:3px;color:var(--mut);font-size:13px}
+dl{margin:0;border-top:1px solid var(--ln)}dl div{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px solid var(--ln)}dt{color:var(--mut)}dd{margin:0;font-weight:600;text-align:right}
+#count{margin:0;color:var(--ac);font-weight:600}#st{margin:0;color:var(--mut);min-height:1.4em}
+</style></head><body>
+<header><h1>Reactor</h1><p>Upload a WAV, M4A or MIDI file. Every seed reads the song through a different lens and renders a new social video. Nothing leaves your browser.</p></header>
+<main>
+<section class="stage"><canvas id="c" width="720" height="1280"></canvas><div id="bar"><i></i></div></section>
+<aside>
+<label class="drop">Drop a song here or click to browse<small>WAV, M4A, MIDI</small><input type="file" id="file" accept=".wav,.m4a,.mp4,.aac,.mid,.midi,audio/*" hidden></label>
+<button id="demo">Try the built-in demo beat</button>
+<div class="row"><label>Format<select id="fmt"><option>9:16</option><option>1:1</option><option>4:5</option><option>16:9</option><option>Mix</option></select></label>
+<label>Length<select id="len"><option value="15">15 s</option><option value="30">30 s</option><option value="60">60 s</option></select></label></div>
+<div class="row"><label>Seed<input id="seed" type="number"></label><button id="shuf">Shuffle seed</button></div>
+<dl id="rx"></dl><p id="count"></p>
+<div class="row"><button id="prev">Preview</button><button id="exp" class="pri">Export video</button></div>
+<div class="row"><label>Videos in batch<input id="nb" type="number" value="6" min="1" max="200"></label><button id="bat">Export batch</button></div>
+<button id="stop">Stop</button>
+<p id="st">Load a song or try the demo beat.</p>
+</aside></main>
+<script>
+const $=s=>document.querySelector(s),V3=(...a)=>new BABYLON.Vector3(...a),canvas=$('#c');
+const FORMATS={'9:16':[720,1280],'1:1':[1080,1080],'4:5':[864,1080],'16:9':[1280,720]};
+const SCENES=['Spectrum Wall','Radial Burst','Helix','Tunnel','Synth Terrain','Crystal'],CAMS=['Orbit','Dolly','Handheld','Static','Sweep'];
+// A lens decides which audio signal drives size, spin, color and effects: the same song, read differently.
+const LENSES={Rhythm:{size:'kick',spin:'flux',hue:'cent',fx:'kick'},Harmony:{size:'mid',spin:'cent',hue:'mid',fx:'flux'},Texture:{size:'high',spin:'flux',hue:'high',fx:'high'},'Low End':{size:'sub',spin:'bass',hue:'sub',fx:'sub'},Dynamics:{size:'rms',spin:'rms',hue:'rms',fx:'rms'}};
+const PAL=[['Neon','#ff2e93','#7c3aed','#22d3ee'],['Ember','#ff9500','#ff3b30','#ffd60a'],['Aqua','#00f5a0','#00d9f5','#0b5fff'],['Vapor','#f72585','#b5179e','#4cc9f0'],['Blood mono','#e8e8f0','#8d99ae','#ef233c'],['Acid','#d4ff00','#00ff87','#003cff'],['Pastel','#ffd6a5','#fdffb6','#bde0fe'],['Sunset','#ff5d8f','#ffb347','#9d4edd']];
+const MIME=['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+const N=64,spec=new Float32Array(N),prev=new Float32Array(N),S={sub:0,bass:0,mid:0,high:0,rms:0,flux:0,kick:0,cent:.3,hit:0},D={size:0,spin:0,hue:0,fx:0},P3=[];
+let AC,an,mon,dest,fd,bands,buf,C=[0],R,SO,root,ps,src,playing=false,busy=false,abort=false,t0=0,plen=1,ph=0,H=0,clock=0,fAvg=0,lastHit=0;
+const rng=s=>()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296},rnd=()=>Math.random()*1e6|0;
+
+/* ---------- audio in: WAV/M4A decode, MIDI parse + synth ---------- */
+function initAudio(){if(AC)return;AC=new AudioContext();an=AC.createAnalyser();an.fftSize=2048;an.smoothingTimeConstant=.55;mon=AC.createGain();dest=AC.createMediaStreamDestination();an.connect(mon);mon.connect(AC.destination);an.connect(dest);fd=new Uint8Array(1024);const bw=AC.sampleRate/2048;bands=[...Array(N+1)].map((_,i)=>Math.min(1023,Math.round(30*(16000/30)**(i/N)/bw)))}
+function parseMidi(ab){const d=new DataView(ab),n=d.getUint16(10),div=d.getUint16(12)||480,T=[[0,5e5]],ev=[];let p=8+d.getUint32(4);
+ const vl=()=>{let v=0,b;do{b=d.getUint8(p++);v=v<<7|b&127}while(b&128);return v};
+ for(let k=0;k<n&&p<d.byteLength;k++){const end=p+8+d.getUint32(p+4);p+=8;let tk=0,run=0;
+  while(p<end){tk+=vl();let s=d.getUint8(p);
+   if(s==255){const ty=d.getUint8(p+1);p+=2;const l=vl();if(ty==81)T.push([tk,d.getUint8(p)<<16|d.getUint8(p+1)<<8|d.getUint8(p+2)]);p+=l;continue}
+   if(s==240||s==247){p++;const l=vl();p+=l;continue}
+   if(s&128){run=s;p++}else s=run;
+   const hi=s>>4,ch=s&15;
+   if(hi==9||hi==8){const nt=d.getUint8(p++),v=d.getUint8(p++);ev.push([tk,ch,nt,hi==9?v:0])}else p+=(hi==12||hi==13)?1:2}
+  p=end}
+ T.sort((a,b)=>a[0]-b[0]);const sec=tk=>{let s=0,lt=0,tp=5e5;for(const[t,v]of T){if(t>=tk)break;s+=(t-lt)*tp/div/1e6;lt=t;tp=v}return s+(tk-lt)*tp/div/1e6};
+ ev.sort((a,b)=>a[0]-b[0]||a[3]-b[3]);const on={},out=[];
+ for(const[t,ch,nt,v]of ev){const k=ch*128+nt;if(v)on[k]=[t,v];else if(on[k]){out.push({s:sec(on[k][0]),e:sec(t),ch,nt,v:on[k][1]});delete on[k]}}
+ if(!out.length)throw Error('no notes found in this MIDI file');return out}
+function synth(Ns){const sr=44100,dur=Ns.reduce((m,n)=>Math.max(m,n.e),0)+1.5,oc=new OfflineAudioContext(2,Math.ceil(dur*sr),sr),mg=oc.createGain();mg.gain.value=.5;mg.connect(oc.destination);
+ const nb=oc.createBuffer(1,sr,sr),nd=nb.getChannelData(0);for(let i=0;i<sr;i++)nd[i]=Math.random()*2-1;
+ for(const n of Ns){const g=oc.createGain(),a=n.v/127*.5;g.connect(mg);
+  if(n.ch==9){if(n.nt==35||n.nt==36){const o=oc.createOscillator();o.frequency.setValueAtTime(160,n.s);o.frequency.exponentialRampToValueAtTime(40,n.s+.15);g.gain.setValueAtTime(a*2,n.s);g.gain.exponentialRampToValueAtTime(.001,n.s+.3);o.connect(g);o.start(n.s);o.stop(n.s+.35)}
+   else{const s=oc.createBufferSource(),f=oc.createBiquadFilter();s.buffer=nb;f.type='highpass';f.frequency.value=n.nt==42||n.nt==46?7e3:1500;g.gain.setValueAtTime(a,n.s);g.gain.exponentialRampToValueAtTime(.001,n.s+.15);s.connect(f);f.connect(g);s.start(n.s);s.stop(n.s+.2)}}
+  else{const o=oc.createOscillator(),e=Math.max(n.e,n.s+.05);o.type=n.nt<60?'sawtooth':'triangle';o.frequency.value=440*2**((n.nt-69)/12);g.gain.setValueAtTime(0,n.s);g.gain.linearRampToValueAtTime(a*.6,n.s+.01);g.gain.setValueAtTime(a*.6,e);g.gain.linearRampToValueAtTime(0,e+.2);o.connect(g);o.start(n.s);o.stop(e+.25)}}
+ return oc.startRendering()}
+function demoNotes(){const Ns=[];for(let i=0;i<128;i++){const t=i*.25,rt=[45,45,48,43][(i>>3)%4];
+ if(i%2==0)Ns.push({s:t,e:t+.1,ch:9,nt:36,v:120});if(i%4==2)Ns.push({s:t,e:t+.1,ch:9,nt:38,v:100});
+ Ns.push({s:t,e:t+.1,ch:9,nt:42,v:i%2?60:90},{s:t,e:t+.22,ch:0,nt:rt+(i%2?12:0),v:100});
+ if(i>=16)Ns.push({s:t,e:t+.2,ch:1,nt:rt+24+[0,3,7,10,12,10,7,3][i%8],v:85})}return Ns}
+function cands(len){if(!buf||buf.duration<=len)return[0];const d=buf.getChannelData(0),sr=buf.sampleRate,n=Math.floor(buf.duration),e=[];
+ for(let s=0;s<n;s++){let a=0;for(let i=s*sr;i<(s+1)*sr&&i<d.length;i+=32)a+=d[i]*d[i];e.push(a)}
+ const w=[];for(let s=0;s+len<=n;s++){let a=0;for(let k=0;k<len;k++)a+=e[s+k];w.push([s,a])}
+ w.sort((a,b)=>b[1]-a[1]);const o=[];for(const[s]of w)if(o.length<8&&o.every(x=>Math.abs(x-s)>=len/2))o.push(s);return o.length?o:[0]}
+
+/* ---------- analysis: bands, RMS, centroid, spectral flux, kick onsets ---------- */
+function analyse(dt){an.getByteFrequencyData(fd);let fl=0,lf=0,cs=0,cw=0,sq=0;
+ for(let i=0;i<N;i++){const lo=bands[i],hi=Math.max(bands[i+1],lo+1);let a=0;for(let j=lo;j<hi;j++)a+=fd[j];a=Math.min(1,a/(hi-lo)/255*(1+i/N));const d=Math.max(0,a-prev[i]);fl+=d;if(i<20)lf+=d;prev[i]=spec[i]=a;cs+=a*i;cw+=a;sq+=a*a}
+ const g=(a,b)=>{let s=0;for(let i=a;i<b;i++)s+=spec[i];return Math.min(1,s/(b-a)*1.5)},sm=(k,v)=>S[k]+=(v-S[k])*.45;
+ sm('sub',g(0,10));sm('bass',g(10,20));sm('mid',g(20,44));sm('high',g(44,N));sm('rms',Math.min(1,Math.sqrt(sq/N)*1.8));sm('flux',Math.min(1,fl*.6));sm('cent',cw?cs/cw/N:.3);
+ S.hit=0;fAvg+=(lf-fAvg)*.08;
+ if(lf>fAvg*1.7+.12&&clock-lastHit>.12){S.hit=1;S.kick=1;lastHit=clock}else S.kick=Math.max(0,S.kick-dt*3.2)}
+function idle(dt){for(let i=0;i<N;i++)spec[i]=.12+.1*Math.sin(i*.35+clock*1.7)*Math.cos(clock*.6+i*.05);for(const k of['sub','bass','mid','high','rms','flux'])S[k]=.25+.15*Math.sin(clock*1.3+k.length);S.kick=Math.max(0,S.kick-dt*3);S.hit=0;if(clock%2.2<dt){S.hit=1;S.kick=1}}
+
+/* ---------- Babylon scene ---------- */
+const engine=new BABYLON.Engine(canvas,true,{preserveDrawingBuffer:true,stencil:false},false),sc=new BABYLON.Scene(engine);
+const cam=new BABYLON.ArcRotateCamera('c',-1.5708,1.5708,15,V3(0,0,0),sc);cam.minZ=.05;cam.lowerRadiusLimit=.05;
+const pp=new BABYLON.DefaultRenderingPipeline('pp',false,sc,[cam]);pp.bloomEnabled=true;pp.bloomKernel=64;pp.bloomThreshold=.08;pp.bloomScale=.6;pp.chromaticAberrationEnabled=true;pp.grainEnabled=true;pp.grain.animated=true;pp.imageProcessingEnabled=true;pp.imageProcessing.vignetteEnabled=true;
+const PT=new BABYLON.DynamicTexture('pt',64,sc,false),cx=PT.getContext(),gr=cx.createRadialGradient(32,32,0,32,32,32);gr.addColorStop(0,'#fff');gr.addColorStop(1,'rgba(255,255,255,0)');cx.fillStyle=gr;cx.fillRect(0,0,64,64);PT.hasAlpha=true;PT.update();
+const mat=()=>{const m=new BABYLON.StandardMaterial('m',sc);m.disableLighting=true;m.emissiveColor=new BABYLON.Color3();return m},tc=new BABYLON.Color3();
+const pal=x=>{x=((x%1)+1)%1*3;const i=x|0;return BABYLON.Color3.LerpToRef(P3[i%3],P3[(i+1)%3],x-i,tc)};
+const L={
+ wall:(m,i,h)=>{m.position.set((i-N/2)*.3,0,0);m.scaling.set(.2,.15+h*6,.2)},
+ ring:(m,i,h)=>{const a=i/N*6.283+ph*.1,l=.2+h*3.5,r=3+D.size+l/2;m.position.set(Math.cos(a)*r,Math.sin(a)*r,0);m.rotation.z=a;m.scaling.set(l,.14,.14)},
+ helix:(m,i,h)=>{const a=i*.4+ph,r=2.5+h*2;m.position.set(Math.cos(a)*r,(i-N/2)*.2,Math.sin(a)*r);m.scaling.setAll(.2+h*1.1)}};
+const bars=k=>{const ms=[...Array(N)].map(()=>{const m=BABYLON.MeshBuilder.CreateBox('b',{size:1},sc);m.parent=root;m.material=mat();return m});
+ return{R:{wall:15,ring:17,helix:19}[k],b:k=='helix'?1.3:1.5708,sw:1,u(){ms.forEach((m,i)=>{L[k](m,i,spec[i]*(.5+D.size*1.2));m.material.emissiveColor.copyFrom(pal(i/N+H))})}}};
+const SCN={'Spectrum Wall':()=>bars('wall'),'Radial Burst':()=>bars('ring'),'Helix':()=>bars('helix'),
+ 'Tunnel':()=>{const n=26,rs=[...Array(n)].map((_,i)=>{const m=BABYLON.MeshBuilder.CreateTorus('t',{diameter:7,thickness:.14,tessellation:R.poly+1},sc);m.bakeTransformIntoVertices(BABYLON.Matrix.RotationX(1.5708));m.parent=root;m.material=mat();m.position.z=.5+i*2;return m});
+  return{R:.1,b:1.5708,sw:.12,f:.03,u(t,dt){rs.forEach((m,i)=>{m.position.z-=dt*(4+D.size*28);if(m.position.z<.5)m.position.z+=n*2;const s=1+spec[(i*5)%N]*.8;m.scaling.set(s,s,1);m.rotation.z=ph*.5+m.position.z*.12;m.material.emissiveColor.copyFrom(pal(m.position.z/(n*2)+H))})}}},
+ 'Synth Terrain':()=>{const W=48,g=BABYLON.MeshBuilder.CreateGround('g',{width:34,height:28,subdivisions:W-1,updatable:true},sc),m=g.material=mat(),pos=g.getVerticesData('position'),hs=new Float32Array(W*W);let acc=0;g.parent=root;g.alwaysSelectAsActiveMesh=true;m.wireframe=true;
+  return{R:15,b:1.2,sw:.5,f:.02,tg:V3(0,1,2),u(t,dt){acc+=dt;if(acc>.06){acc=0;hs.copyWithin(0,W);for(let c=0;c<W;c++)hs[(W-1)*W+c]=spec[Math.min(N-1,Math.abs(c-W/2+.5)/(W/2)*40|0)]}
+   for(let i=0;i<W*W;i++)pos[i*3+1]=hs[i]*(2+D.size*5);g.updateVerticesData('position',pos);m.emissiveColor.copyFrom(pal(H))}}},
+ 'Crystal':()=>{const c=BABYLON.MeshBuilder.CreateIcoSphere('c',{radius:2.4,subdivisions:2+R.poly%3,flat:true,updatable:true},sc),m=c.material=mat(),pos=c.getVerticesData('position'),b=pos.slice();c.parent=root;c.alwaysSelectAsActiveMesh=true;m.wireframe=true;
+  return{R:13,b:1.4,sw:1,u(){for(let i=0;i<pos.length;i+=3){const s=1+spec[(((Math.atan2(b[i+2],b[i])/Math.PI+1)*N/2)|0)%N]*(.5+D.size)*.9;pos[i]=b[i]*s;pos[i+1]=b[i+1]*s;pos[i+2]=b[i+2]*s}
+   c.updateVerticesData('position',pos);c.rotation.y=ph*.4;c.rotation.x=ph*.2;c.scaling.setAll(1+D.fx*.12);m.emissiveColor.copyFrom(pal(H))}}}};
+
+/* ---------- recipe: one seed = one complete, repeatable interpretation of the song ---------- */
+function recipe(seed){const r=rng(seed),pk=a=>a[r()*a.length|0],f=$('#fmt').value;
+ return{seed,scene:pk(SCENES),lens:pk(Object.keys(LENSES)),pal:r()*PAL.length|0,hue:r(),cam:pk(CAMS),poly:3+(r()*6|0),chroma:r()<.6,grain:r()<.4,vig:r()<.7,burst:r()<.6,flash:r()<.5,bloom:.4+r()*.9,fmt:f=='Mix'?pk(Object.keys(FORMATS)):f,start:C[r()*C.length|0]}}
+function build(r){R=r;if(root)root.dispose(false,true);if(ps)ps.dispose();ps=null;
+ const[w,h]=FORMATS[R.fmt];engine.setSize(w,h);P3.length=0;PAL[R.pal].slice(1).forEach(x=>P3.push(BABYLON.Color3.FromHexString(x)));
+ root=new BABYLON.TransformNode('root',sc);SO=SCN[R.scene]();cam.setTarget(SO.tg||V3(0,0,0));
+ sc.fogMode=BABYLON.Scene.FOGMODE_EXP2;sc.fogDensity=SO.f||0;const bg=P3[0];sc.fogColor.set(bg.r*.05,bg.g*.05,bg.b*.05);
+ pp.grain.intensity=R.grain?18:0;pp.imageProcessing.vignetteWeight=R.vig?3:0;
+ if(R.burst){ps=new BABYLON.ParticleSystem('p',2500,sc);ps.particleTexture=PT;ps.emitter=(SO.tg||V3(0,0,0)).clone();
+  Object.assign(ps,{minEmitBox:V3(-.3,-.3,-.3),maxEmitBox:V3(.3,.3,.3),direction1:V3(-1,-1,-1),direction2:V3(1,1,1),minSize:.06,maxSize:.28,minLifeTime:.5,maxLifeTime:1.6,minEmitPower:3,maxEmitPower:10,emitRate:0,blendMode:BABYLON.ParticleSystem.BLENDMODE_ONEONE,color1:P3[1].toColor4(1),color2:P3[2].toColor4(1),colorDead:new BABYLON.Color4(0,0,0,0)});ps.start()}}
+function apply(){build(recipe(+$('#seed').value||0));
+ const rows=[['Scene',R.scene],['Lens',R.lens],['Reads the song as',Object.entries(LENSES[R.lens]).map(([k,v])=>k+' from '+v).join(', ')],['Camera',R.cam],['Palette',PAL[R.pal][0]],['Clip starts at',R.start+' s'],['Format',R.fmt]];
+ $('#rx').innerHTML=rows.map(([k,v])=>`<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
+ $('#count').textContent=`${(SCENES.length*Object.keys(LENSES).length*PAL.length*CAMS.length*32*4*C.length).toLocaleString()}+ distinct videos from this song`}
+
+/* ---------- per-frame: lens drivers, camera, post FX ---------- */
+function frame(dt){clock+=dt;playing?analyse(dt):idle(dt);const Ln=LENSES[R.lens];for(const k in Ln)D[k]=S[Ln[k]];
+ ph+=dt*(.3+D.spin*2.5);H=R.hue+clock*.015+D.hue*.4;SO.u(clock,dt);
+ const asp=canvas.width/canvas.height;let da=0,db=0,dr=-D.fx*SO.R*.05;
+ ({Orbit(){da=Math.sin(clock*.25)*1.1*SO.sw;db=Math.sin(clock*.17)*.3*SO.sw},Dolly(){dr+=Math.sin(clock*.35)*SO.R*.25*(SO.sw>.3)},Handheld(){da=(Math.sin(clock*1.3)+Math.sin(clock*2.9))*.02*(1+S.kick*3);db=Math.sin(clock*2.1)*.015*(1+S.kick*3)},Sweep(){da=clock*.15*SO.sw},Static(){}})[R.cam]();
+ cam.alpha=-1.5708+da;cam.beta=SO.b+db;cam.radius=(SO.R+dr)*Math.max(1,1.78/asp);
+ pp.chromaticAberration.aberrationAmount=R.chroma?8+S.kick*S.kick*160:0;pp.bloomWeight=R.bloom*(.5+D.fx*.9);
+ const b=P3[0],f=.05+(R.flash?D.fx*.5:0);sc.clearColor.set(b.r*f,b.g*f,b.b*f,1);
+ if(ps&&S.hit)ps.manualEmitCount=40+D.fx*180|0;
+ $('#bar i').style.width=playing?Math.min(100,(AC.currentTime-t0)/plen*100)+'%':'0'}
+let last=performance.now();engine.runRenderLoop(()=>{const n=performance.now(),dt=Math.min(.05,(n-last)/1e3);last=n;frame(dt);sc.render()});
+
+/* ---------- play, record, batch ---------- */
+function save(b,mt){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=`reactor_${R.seed}_${R.scene.replace(/ /g,'')}_${R.fmt.replace(':','x')}.${mt.includes('mp4')?'mp4':'webm'}`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4e3)}
+function run(rec){return new Promise(res=>{if(!buf)return res();initAudio();AC.resume();if(src){src.onended=null;try{src.stop()}catch{}}
+ plen=Math.min(+$('#len').value,buf.duration-R.start);let mr,ch=[];
+ if(rec){const mt=MIME.find(t=>MediaRecorder.isTypeSupported(t))||'';mr=new MediaRecorder(new MediaStream([...canvas.captureStream(30).getVideoTracks(),...dest.stream.getAudioTracks()]),{mimeType:mt,videoBitsPerSecond:8e6});
+  mr.ondataavailable=e=>e.data.size&&ch.push(e.data);mr.onstop=()=>{save(new Blob(ch,{type:mt.split(';')[0]}),mt);res()};mr.start()}
+ mon.gain.value=rec?0:1;src=AC.createBufferSource();src.buffer=buf;src.connect(an);t0=AC.currentTime;playing=true;
+ src.onended=()=>{playing=false;src=null;if(mr)setTimeout(()=>mr.stop(),250);else res()};src.start(0,R.start,plen)})}
+async function batch(){if(busy||!buf)return;busy=true;abort=false;const n=+$('#nb').value,s0=+$('#seed').value;
+ for(let i=0;i<n&&!abort;i++){$('#seed').value=s0+i;apply();$('#st').textContent=`Recording video ${i+1} of ${n}, seed ${s0+i}. Keep this tab visible.`;await run(true)}
+ $('#st').textContent=abort?'Stopped.':`Done. ${n} videos saved to your downloads.`;busy=false}
+async function load(f){initAudio();$('#st').textContent='Reading '+f.name+'...';
+ try{const ab=await f.arrayBuffer();buf=/\.midi?$/i.test(f.name)?await synth(parseMidi(ab)):await AC.decodeAudioData(ab);ready(f.name)}catch(e){$('#st').textContent='Could not read that file ('+e.message+'). Try a WAV, M4A or MIDI file.'}}
+function ready(name){C=cands(+$('#len').value);$('#seed').value=rnd();apply();$('#st').textContent=`${name} is loaded, ${buf.duration.toFixed(0)} s long. Preview it or export a video.`}
+
+$('#file').onchange=e=>e.target.files[0]&&load(e.target.files[0]);
+['dragover','drop'].forEach(t=>addEventListener(t,e=>{e.preventDefault();if(t=='drop'&&e.dataTransfer.files[0])load(e.dataTransfer.files[0])}));
+$('#demo').onclick=async()=>{initAudio();$('#st').textContent='Building demo beat...';buf=await synth(demoNotes());ready('The demo beat')};
+$('#shuf').onclick=()=>{$('#seed').value=rnd();apply()};$('#seed').onchange=apply;$('#fmt').onchange=apply;
+$('#len').onchange=()=>{C=cands(+$('#len').value);apply()};
+$('#prev').onclick=()=>{if(!busy)run(false)};
+$('#exp').onclick=async()=>{if(busy||!buf)return;busy=true;abort=false;$('#st').textContent='Recording. Keep this tab visible.';await run(true);$('#st').textContent='Saved to your downloads.';busy=false};
+$('#bat').onclick=batch;$('#stop').onclick=()=>{abort=true;if(src)src.stop()};
+$('#seed').value=rnd();apply();
+</script></body></html>
