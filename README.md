@@ -1,10 +1,10 @@
 # Reactor
 
-One song in, thousands of videos out.
+Reactor converts a recording (WAV, M4A, or Standard MIDI File) into a three-dimensional, audio-reactive video, rendered entirely in the browser. All motion is driven by the audio signal itself; variation is produced by seeded procedural generation and deterministic algorithmic mutation, so any result can be reproduced exactly from its seed. No artificial intelligence is used at any stage, and no file leaves the visitor's machine. MIDI files are parsed and synthesised in the browser, so a VariTheory export, or any Standard MIDI File, serves directly as a video source.
 
-**Live demo:** https://frozen-in-flames.github.io/reactor/
+## Live demonstration
 
-Upload a WAV, M4A or MIDI file and Reactor renders a social video that reacts to your audio. Everything runs in your browser; nothing is uploaded anywhere. MIDI files are parsed and synthesized in-browser, so a VariTheory export (or any Standard MIDI File) becomes a video source directly.
+- [Reactor](https://frozen-in-flames.github.io/reactor/): the full application, running in the browser.
 
 ## How it works
 
